@@ -1,7 +1,12 @@
 import telebot
+import os
 from telebot import types
 from telebot.apihelper import ApiTelegramException
-from config import BOT_TOKEN
+# from config import BOT_TOKEN
+
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не установлен. Убедитесь, что он задан в переменных окружения.")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
