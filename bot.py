@@ -1,20 +1,20 @@
-import telebot
 import os
+import telebot
 from telebot import types
-from telebot.apihelper import ApiTelegramException
-# from config import BOT_TOKEN
+from flask import Flask, request
 
+# Получаем токен из переменных окружения (Render)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не установлен. Убедитесь, что он задан в переменных окружения.")
+    raise RuntimeError("Переменная окружения BOT_TOKEN не задана!")
 
+# Создаём бота и Flask-приложение
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
-# Хранение данных о количестве открытых осколков для каждого пользователя
+# Хранение данных в памяти (для продакшена — использовать Redis/БД)
 user_shards_data = {}  # {user_id: {shard_type: count}}
-
-# Отслеживание ожидаемого ввода: {user_id: shard_type}
-waiting_for_input = {}
+waiting_for_input = {}  # {user_id: shard_type}
 
 # Пороги
 LEGENDARY_THRESHOLDS = {
@@ -31,29 +31,14 @@ EPIC_THRESHOLDS = {
     'shard_sacred': None
 }
 
-# Проверка подключения
-try:
-    bot_info = bot.get_me()
-    print(f"Бот успешно подключен: @{bot_info.username}")
-    bot.set_my_commands([
-        types.BotCommand("start", "🚀 Начать работу с ботом"),
-        types.BotCommand("help", "📚 Помощь"),
-        types.BotCommand("info_shard", "ℹ️ Шансы призыва"),
-        types.BotCommand("stats", "📊 Статистика"),
-    ])
-    print("Меню команд установлено")
-except Exception as e:
-    print(f"Ошибка при запуске: {e}")
-    raise
 
-
-# === Клавиатуры ===
+# === Вспомогательные функции ===
 
 def create_reply_keyboard():
-    """Постоянная клавиатура внизу экрана"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
         types.KeyboardButton("📊 Статистика"),
+        types.KeyboardButton("📥 Ввести кол-во открытых осколков"),
         types.KeyboardButton("🎉 ВЫПАЛО!"),
         types.KeyboardButton("ℹ️ Информация"),
         types.KeyboardButton("❓ Помощь")
@@ -62,7 +47,6 @@ def create_reply_keyboard():
 
 
 def create_shards_keyboard():
-    """Клавиатура выбора осколка (для ввода)"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("Синий 💠", callback_data='shard_blue'),
@@ -75,7 +59,6 @@ def create_shards_keyboard():
 
 
 def create_shards_reset_keyboard():
-    """Клавиатура выбора осколка ДЛЯ СБРОСА (без кнопки Статистика)"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("Синий 💠", callback_data='reset_choice_shard_blue'),
@@ -87,17 +70,14 @@ def create_shards_reset_keyboard():
 
 
 def create_reset_rarity_keyboard(shard_type):
-    """Клавиатура выбора редкости при сбросе"""
     markup = types.InlineKeyboardMarkup(row_width=1)
     buttons = []
-
     if EPIC_THRESHOLDS.get(shard_type) is not None:
         buttons.append(types.InlineKeyboardButton("Эпический герой 🟣", callback_data=f"reset_{shard_type}_epic"))
     if LEGENDARY_THRESHOLDS.get(shard_type) is not None:
         buttons.append(types.InlineKeyboardButton("Легендарный герой 🟡", callback_data=f"reset_{shard_type}_legendary"))
     if shard_type == 'shard_mythic':
         buttons.append(types.InlineKeyboardButton("Мифический герой 🔮", callback_data=f"reset_{shard_type}_mythic"))
-
     if buttons:
         markup.add(*buttons)
         markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_reset"))
@@ -106,7 +86,7 @@ def create_reset_rarity_keyboard(shard_type):
     return markup
 
 
-# === Команды ===
+# === Обработчики команд и кнопок ===
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -114,7 +94,7 @@ def send_welcome(message):
     bot.reply_to(message, (
         "👋 Привет! Я бот для статистики Raid Shards.\n\n"
         "🎯 Выберите тип осколка или воспользуйтесь кнопками ниже!\n\n"
-        "💡 Нажмите «🎉 ВЫПАЛО!», если получили героя (Эпического / Легендарного / Мифического) и хотите сбросить счётчик."
+        "💡 Нажмите «🎉 ВЫПАЛО!», если получили героя и хотите сбросить счётчик."
     ), reply_markup=reply_keyboard)
     bot.send_message(message.chat.id, "Выберите тип осколка:", reply_markup=create_shards_keyboard())
 
@@ -126,9 +106,10 @@ def send_help(message):
 /start — 🚀 Начать
 /info_shard — ℹ️ Шансы призыва
 /stats — 📊 Статистика
-🎉 ВЫПАЛО! — сбросить счётчик (в меню)
+📥 Ввести кол-во открытых осколков — указать количество открытых осколков
+🎉 ВЫПАЛО! — сбросить счётчик
 
-💡 Совет: всегда обновляйте количество осколков перед сбросом!"""
+💡 Совет: всегда обновляйте количество перед сбросом!"""
     bot.reply_to(message, help_text, parse_mode='HTML', reply_markup=create_reply_keyboard())
 
 
@@ -140,7 +121,7 @@ def send_stats_command(message):
             message,
             "📊 <b>Статистика открытых осколков</b>\n\n"
             "❌ У вас пока нет данных.\n"
-            "👉 Укажите количество осколков или нажмите «🎉 ВЫПАЛО!» для сброса.",
+            "👉 Укажите количество или нажмите «📥 Ввести кол-во открытых осколков».",
             parse_mode='HTML',
             reply_markup=create_reply_keyboard()
         )
@@ -183,7 +164,7 @@ def send_shard_info(message):
     bot.reply_to(message, info_text, parse_mode='HTML', reply_markup=create_reply_keyboard())
 
 
-# === Обработчики инлайн-кнопок ===
+# === Callback-обработчики ===
 
 @bot.callback_query_handler(func=lambda call: call.data == 'show_stats')
 def show_stats_callback(call):
@@ -194,7 +175,7 @@ def show_stats_callback(call):
             call.message.chat.id,
             "📊 <b>Статистика открытых осколков</b>\n\n"
             "❌ У вас пока нет данных.\n"
-            "👉 Укажите количество открытых осколков или нажмите «🎉ВЫПАЛО!» для сброса счётчика.",
+            "👉 Укажите количество или нажмите «📥 Ввести кол-во открытых осколков».",
             parse_mode='HTML',
             reply_markup=create_reply_keyboard()
         )
@@ -258,7 +239,6 @@ def handle_shard_selection(call):
             stats_text += f"⚡ До эпического: <b>{epic_remaining}</b>\n"
         stats_text += f"⏳ До легендарного: <b>{remaining}</b>"
 
-        # Кнопка ВЫПАЛО!
         reset_markup = types.InlineKeyboardMarkup()
         reset_markup.add(types.InlineKeyboardButton("🎉 ВЫПАЛО! → Сбросить счётчик", callback_data=f"show_reset_menu_{shard_type}"))
         bot.send_message(call.message.chat.id, stats_text, parse_mode='HTML', reply_markup=reset_markup)
@@ -338,11 +318,18 @@ def handle_cancel_reset(call):
         pass
 
 
-# === Обработка текстовых сообщений ===
+# === Обработка текстовых кнопок ===
 
 @bot.message_handler(func=lambda message: message.text == "📊 Статистика")
 def stats_from_button(message):
     send_stats_command(message)
+
+
+@bot.message_handler(func=lambda message: message.text == "📥 Ввести кол-во открытых осколков")
+def enter_count_button(message):
+    reply_keyboard = create_reply_keyboard()
+    bot.reply_to(message, "🎯 Выберите тип осколка для ввода количества:", reply_markup=reply_keyboard)
+    bot.send_message(message.chat.id, "Выберите тип осколка:", reply_markup=create_shards_keyboard())
 
 
 @bot.message_handler(func=lambda message: message.text == "🎉 ВЫПАЛО!")
@@ -372,7 +359,6 @@ def handle_message(message):
     if text.startswith('/'):
         return
 
-    # Если не стандартная кнопка — попробуем обработать как число
     if user_id in waiting_for_input:
         shard_type = waiting_for_input[user_id]
         try:
@@ -403,7 +389,6 @@ def handle_message(message):
                 stats_text += f"⚡ До эпического: <b>{epic_remaining}</b>\n"
             stats_text += f"⏳ До легендарного: <b>{remaining}</b>"
 
-            # Кнопка ВЫПАЛО!
             reset_markup = types.InlineKeyboardMarkup()
             reset_markup.add(types.InlineKeyboardButton("🎉 ВЫПАЛО! → Сбросить счётчик", callback_data=f"show_reset_menu_{shard_type}"))
             bot.reply_to(message, stats_text, parse_mode='HTML', reply_markup=reset_markup)
@@ -416,14 +401,37 @@ def handle_message(message):
         bot.reply_to(message, "Неизвестная команда. Используйте кнопки.", reply_markup=create_reply_keyboard())
 
 
-# === Запуск ===
+# === Webhook и запуск сервера ===
 
-if __name__ == '__main__':
-    print("Бот запущен...")
+# Render автоматически задаёт RENDER_EXTERNAL_URL
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_URL')}{WEBHOOK_PATH}"
+
+
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    return 'Invalid content-type', 403
+
+
+@app.route("/")
+def health_check():
+    return "✅ Raid Shards Bot is running on Render (webhook mode)!"
+
+
+if __name__ == "__main__":
+    # Устанавливаем webhook при старте
     try:
-        bot.polling(none_stop=True, interval=0, timeout=20)
-    except KeyboardInterrupt:
-        print("\nОстановлен пользователем")
+        bot.remove_webhook()
+        bot.set_webhook(url=WEBHOOK_URL)
+        print(f"✅ Webhook установлен: {WEBHOOK_URL}")
     except Exception as e:
-        print(f"Ошибка: {e}")
-        raise
+        print(f"❌ Ошибка установки webhook: {e}")
+
+    # Запускаем Flask-сервер на порту из Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
