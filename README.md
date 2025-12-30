@@ -15,7 +15,7 @@ pip install -r requirements.txt
 
 2. Настройте токен бота:
    - Скопируйте файл `config.py.example` в `config.py`
-   - Откройте `config.py` и замените `YOUR_BOT_TOKEN` на токен вашего бота от @BotFather
+   - Откройте `config.py` и замените `BOT_TOKEN` на токен вашего бота от @BotFather
 
 3. Запустите бота:
 ```bash
@@ -26,5 +26,4 @@ python bot.py
 
 - `bot.py` - основной файл бота
 - `config.py` - конфигурация с токеном (не попадает в git)
-- `config.py.example` - пример конфигурации
 - `requirements.txt` - зависимости проекта
