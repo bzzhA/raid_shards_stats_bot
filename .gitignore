@@ -1,5 +1,6 @@
 # Токен бота
-config.py
+config.p
+.env
 
 # Python
 __pycache__/
