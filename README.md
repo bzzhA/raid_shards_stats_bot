@@ -1,2 +1,30 @@
 # raid_shards_stats_bot
 Raid Shards Stats
+
+## Установка
+
+1. Установите необходимые зависимости:
+```bash
+pip install pyTelegramBotAPI
+```
+
+или используйте requirements.txt:
+```bash
+pip install -r requirements.txt
+```
+
+2. Настройте токен бота:
+   - Скопируйте файл `config.py.example` в `config.py`
+   - Откройте `config.py` и замените `YOUR_BOT_TOKEN` на токен вашего бота от @BotFather
+
+3. Запустите бота:
+```bash
+python bot.py
+```
+
+## Структура проекта
+
+- `bot.py` - основной файл бота
+- `config.py` - конфигурация с токеном (не попадает в git)
+- `config.py.example` - пример конфигурации
+- `requirements.txt` - зависимости проекта
