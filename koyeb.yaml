@@ -1,0 +1,12 @@
+name: raid-shards-bot
+services:
+  - name: bot
+    env:
+      - name: BOT_TOKEN
+        secret: true
+    ports:
+      - port: 8080
+        protocol: http
+    scaling:
+      min: 1
+      max: 1
