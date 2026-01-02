@@ -4,6 +4,8 @@ import asyncio
 from telebot.async_telebot import AsyncTeleBot
 from telebot import types
 import logging
+from flask import Flask, request
+from threading import Thread
 
 # Настройка логирования
 logging.basicConfig(
@@ -16,6 +18,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     raise RuntimeError("Переменная окружения BOT_TOKEN не задана!")
+
+# Создаём Flask приложение
+app = Flask(__name__)
 
 # Создаём бота
 bot = AsyncTeleBot(BOT_TOKEN)
@@ -416,41 +421,77 @@ async def handle_message(message):
         await bot.reply_to(message, "Неизвестная команда. Используйте кнопки.", reply_markup=create_reply_keyboard())
 
 
-# === Запуск бота ===
+# === Flask роуты для вебхука ===
+
+@app.route('/')
+def index():
+    return "Telegram Bot is running on Koyeb!"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = types.Update.de_json(json_string)
+        
+        # Обрабатываем обновление асинхронно
+        asyncio.run(bot.process_new_updates([update]))
+        
+        return ''
+    return 'Bad Request', 400
+
+
+# === Запуск бота на Koyeb ===
+
+async def setup_webhook():
+    """Настройка вебхука"""
+    try:
+        # Получаем домен от Koyeb
+        koyeb_domain = os.getenv('KOYEB_APP_DOMAIN')
+        if not koyeb_domain:
+            # Если нет переменной окружения, можно использовать другой способ
+            # или запросить у пользователя ввести домен
+            logger.warning("KOYEB_APP_DOMAIN не установлен. Бот будет работать, но вебхук не настроен.")
+            return
+        
+        webhook_url = f"https://{koyeb_domain}/webhook"
+        
+        # Удаляем старый вебхук
+        await bot.remove_webhook()
+        await asyncio.sleep(1)
+        
+        # Устанавливаем новый вебхук
+        await bot.set_webhook(
+            url=webhook_url,
+            max_connections=40,
+            drop_pending_updates=True
+        )
+        
+        logger.info(f"✅ Вебхук установлен: {webhook_url}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при настройке вебхука: {e}")
+
+
+def run_flask():
+    """Запуск Flask приложения"""
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
 
 async def main():
-    logger.info("🚀 Бот запускается...")
-    try:
-        # УБРАН параметр long_polling_timeout
-        await bot.infinity_polling(timeout=60, request_timeout=60)
-    except Exception as e:
-        logger.error(f"❌ Ошибка при работе бота: {e}")
-    finally:
-        logger.info("🛑 Бот остановлен")
-
-
-def signal_handler(signum, frame):
-    logger.info(f"Получен сигнал {signum}. Завершение работы...")
-    asyncio.create_task(shutdown())
-
-
-async def shutdown():
-    logger.info("Завершение работы бота...")
-    await bot.close()
-    # Дополнительная очистка при необходимости
+    """Основная функция запуска"""
+    logger.info("🚀 Бот запускается на Koyeb...")
+    
+    # Настраиваем вебхук
+    await setup_webhook()
+    
+    logger.info("✅ Бот успешно запущен и готов к работе через вебхук!")
+    logger.info("🌐 Проверьте работу: /start в Telegram")
 
 
 if __name__ == "__main__":
-    # Регистрируем обработчики сигналов
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
+    # Запускаем настройку вебхука
+    asyncio.run(main())
     
-    logger.info("✅ Бот успешно запущен и готов к работе!")
-    logger.info("💡 Используйте Ctrl+C для остановки")
-    
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("🛑 Бот остановлен пользователем")
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
+    # Запускаем Flask сервер
+    run_flask()
