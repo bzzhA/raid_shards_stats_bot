@@ -145,7 +145,7 @@ async def send_help(message):
 📥 Ввести кол-во осколков — указать количество
 🎉 ВЫПАЛО! — сбросить счётчик
 
-💡 Совет: всегда обновляйте количество перед сбросом!"""
+💡 При вводе количества осколков оно будет ПРИБАВЛЕНО к текущему значению!"""
     await bot.reply_to(message, help_text, parse_mode='HTML', reply_markup=create_reply_keyboard())
 
 
@@ -225,7 +225,10 @@ async def handle_shard_selection(call):
         waiting_for_input[user_id] = shard_type
         await bot.send_message(
             call.message.chat.id,
-            f"✅ Выбран {shard_name}!\n\n📝 Укажите кол-во открытых осколков!",
+            f"✅ Выбран {shard_name}!\n\n📝 Укажите кол-во открытых осколков!\n\n"
+            f"ℹ️ Текущее количество: <b>0</b>\n"
+            f"💡 Введите число, чтобы добавить к текущему количеству.",
+            parse_mode='HTML',
             reply_markup=create_reply_keyboard()
         )
     else:
@@ -237,11 +240,10 @@ async def handle_shard_selection(call):
         stats_text = f"✅ {shard_name}\n📦 Открыто: <b>{current_count}</b>\n"
         if epic_remaining is not None and epic_remaining > 0:
             stats_text += f"⚡ До эпического: <b>{epic_remaining}</b>\n"
-        stats_text += f"⏳ До легендарного: <b>{remaining}</b>"
+        stats_text += f"⏳ До легендарного: <b>{remaining}</b>\n\n"
+        stats_text += f"💡 Введите число, чтобы добавить к текущему количеству:"
 
-        reset_markup = types.InlineKeyboardMarkup()
-        reset_markup.add(types.InlineKeyboardButton("🎉 ВЫПАЛО! → Сбросить счётчик", callback_data=f"show_reset_menu_{shard_type}"))
-        await bot.send_message(call.message.chat.id, stats_text, parse_mode='HTML', reply_markup=reset_markup)
+        await bot.send_message(call.message.chat.id, stats_text, parse_mode='HTML', reply_markup=create_reply_keyboard())
         waiting_for_input[user_id] = shard_type
 
 
@@ -290,7 +292,7 @@ async def handle_reset_shard(call):
         'shard_blue': 'Синий 💠',
         'shard_void': 'Войд 🔷',
         'shard_mythic': 'Мифик ♦️',
-        'shard_sacred': '✨ Сакрал'
+        'shard_sacred': 'Сакрал ✨'
     }
     rarity_names = {
         'epic': 'Эпического',
@@ -327,7 +329,12 @@ async def stats_from_button(message):
 
 @bot.message_handler(func=lambda message: message.text == "📥 Ввести кол-во осколков")
 async def enter_count_button(message):
-    await bot.reply_to(message, "🎯 Выберите тип осколка для ввода количества:", reply_markup=create_reply_keyboard())
+    await bot.reply_to(message, 
+        "🎯 Выберите тип осколка для ввода количества:\n\n"
+        "ℹ️ При вводе числа оно будет ПРИБАВЛЕНО к текущему количеству.\n"
+        "Например: если у вас уже 20 и вы вводите 25, будет 45.",
+        reply_markup=create_reply_keyboard()
+    )
     await bot.send_message(message.chat.id, "Выберите тип осколка:", reply_markup=create_shards_keyboard())
 
 
@@ -368,7 +375,12 @@ async def handle_message(message):
 
             if user_id not in user_shards_data:
                 user_shards_data[user_id] = {}
-            user_shards_data[user_id][shard_type] = count
+            
+            # Получаем текущее количество и прибавляем новое
+            current_count = user_shards_data[user_id].get(shard_type, 0)
+            new_count = current_count + count
+            
+            user_shards_data[user_id][shard_type] = new_count
 
             shard_names = {
                 'shard_blue': 'Синий 💠',
@@ -377,13 +389,17 @@ async def handle_message(message):
                 'shard_sacred': 'Сакрал ✨'
             }
             shard_name = shard_names[shard_type]
-            current_count = count
+            
+            # Сообщаем о добавлении
             threshold = LEGENDARY_THRESHOLDS[shard_type]
             epic_threshold = EPIC_THRESHOLDS[shard_type]
-            remaining = max(0, threshold - current_count)
-            epic_remaining = max(0, epic_threshold - current_count) if epic_threshold else None
+            remaining = max(0, threshold - new_count)
+            epic_remaining = max(0, epic_threshold - new_count) if epic_threshold else None
 
-            stats_text = f"✅ Обновлено: {shard_name}\n📦 Открыто: <b>{current_count}</b>\n"
+            stats_text = f"✅ Обновлено: {shard_name}\n"
+            stats_text += f"📈 Добавлено: +{count}\n"
+            stats_text += f"📦 Всего открыто: <b>{new_count}</b>\n"
+            
             if epic_remaining is not None and epic_remaining > 0:
                 stats_text += f"⚡ До эпического: <b>{epic_remaining}</b>\n"
             stats_text += f"⏳ До легендарного: <b>{remaining}</b>"
