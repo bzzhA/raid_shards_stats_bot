@@ -1,11 +1,11 @@
 import os
 import signal
 import asyncio
+import requests
 from telebot.async_telebot import AsyncTeleBot
 from telebot import types
 import logging
 from flask import Flask, request
-from threading import Thread
 
 # Настройка логирования
 logging.basicConfig(
@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     raise RuntimeError("Переменная окружения BOT_TOKEN не задана!")
+
+# Получаем URL вебхука из переменных окружения или вычисляем
+KOYEB_APP_DOMAIN = os.getenv('KOYEB_APP_DOMAIN')
+if not KOYEB_APP_DOMAIN:
+    # Если домен не указан, попробуем получить из другого источника
+    # или использовать заглушку (потребуется ручная настройка)
+    KOYEB_APP_DOMAIN = "koyeb.app"
+
+WEBHOOK_URL = f"https://{KOYEB_APP_DOMAIN}/webhook"
 
 # Создаём Flask приложение
 app = Flask(__name__)
@@ -125,6 +134,48 @@ def format_stats(user_id):
         stats_text += f"   ⏳ До легендарного: <b>{remaining}</b>\n\n"
     
     return stats_text
+
+
+def setup_webhook_sync():
+    """Синхронная функция для установки вебхука через GET запрос"""
+    try:
+        # Формируем URL для установки вебхука
+        telegram_api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        
+        # Параметры для запроса
+        params = {
+            'url': WEBHOOK_URL,
+            'max_connections': 40,
+            'drop_pending_updates': True
+        }
+        
+        logger.info(f"🔄 Устанавливаем вебхук на URL: {WEBHOOK_URL}")
+        
+        # Отправляем GET запрос
+        response = requests.get(telegram_api_url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('ok'):
+                logger.info(f"✅ Вебхук успешно установлен: {WEBHOOK_URL}")
+                logger.info(f"📝 Ответ Telegram API: {result.get('description', 'Успешно')}")
+                
+                # Проверяем информацию о вебхуке
+                check_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+                check_response = requests.get(check_url, timeout=10)
+                if check_response.status_code == 200:
+                    webhook_info = check_response.json()
+                    if webhook_info.get('ok'):
+                        logger.info(f"🔍 Информация о вебхуке: {webhook_info.get('result', {})}")
+            else:
+                logger.error(f"❌ Ошибка установки вебхука: {result}")
+        else:
+            logger.error(f"❌ HTTP ошибка: {response.status_code} - {response.text}")
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Ошибка сети при установке вебхука: {e}")
+    except Exception as e:
+        logger.error(f"❌ Неожиданная ошибка при установке вебхука: {e}")
 
 
 # === Обработчики команд ===
@@ -387,7 +438,7 @@ async def handle_message(message):
                 'shard_blue': 'Синий 💠',
                 'shard_void': 'Войд 🔷',
                 'shard_mythic': 'Мифик ♦️',
-                'shard_sacred': 'Сакрал ✨'
+                'shard_sacred': '✨ Сакрал'
             }
             shard_name = shard_names[shard_type]
             
@@ -421,7 +472,7 @@ async def handle_message(message):
 
 @app.route('/')
 def index():
-    return "Telegram Bot is running on Koyeb!"
+    return "Telegram Bot is running on Koyeb! Webhook URL: " + WEBHOOK_URL
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -435,59 +486,33 @@ def webhook():
         return ''
     return 'Bad Request', 400
 
+@app.route('/setup_webhook', methods=['GET'])
+def setup_webhook_route():
+    """Ручка для ручной установки вебхука через браузер"""
+    setup_webhook_sync()
+    return f"Webhook setup attempted for URL: {WEBHOOK_URL}<br>Check logs for details."
+
 
 # === Запуск бота на Koyeb ===
-
-async def setup_webhook():
-    """Настройка вебхука"""
-    try:
-        # Получаем домен от Koyeb
-        koyeb_domain = os.getenv('KOYEB_APP_DOMAIN')
-        if not koyeb_domain:
-            # Если нет переменной окружения, можно использовать другой способ
-            # или запросить у пользователя ввести домен
-            logger.warning("KOYEB_APP_DOMAIN не установлен. Бот будет работать, но вебхук не настроен.")
-            return
-        
-        webhook_url = f"https://{koyeb_domain}/webhook"
-        
-        # Удаляем старый вебхук
-        await bot.remove_webhook()
-        await asyncio.sleep(1)
-        
-        # Устанавливаем новый вебхук
-        await bot.set_webhook(
-            url=webhook_url,
-            max_connections=40,
-            drop_pending_updates=True
-        )
-        
-        logger.info(f"✅ Вебхук установлен: {webhook_url}")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при настройке вебхука: {e}")
-
 
 def run_flask():
     """Запуск Flask приложения"""
     port = int(os.environ.get('PORT', 8080))
+    logger.info(f"🚀 Запускаем Flask на порту {port}")
+    logger.info(f"🌐 Домен приложения: {KOYEB_APP_DOMAIN}")
+    logger.info(f"🔗 Вебхук URL: {WEBHOOK_URL}")
     app.run(host='0.0.0.0', port=port)
 
 
-async def main():
-    """Основная функция запуска"""
+if __name__ == "__main__":
     logger.info("🚀 Бот запускается на Koyeb...")
     
-    # Настраиваем вебхук
-    await setup_webhook()
+    # Устанавливаем вебхук при старте
+    setup_webhook_sync()
     
-    logger.info("✅ Бот успешно запущен и готов к работе через вебхук!")
+    logger.info("✅ Вебхук установлен, запускаем Flask сервер...")
     logger.info("🌐 Проверьте работу: /start в Telegram")
-
-
-if __name__ == "__main__":
-    # Запускаем настройку вебхука
-    asyncio.run(main())
+    logger.info(f"🔧 Для повторной установки вебхука откройте: https://{KOYEB_APP_DOMAIN}/setup_webhook")
     
     # Запускаем Flask сервер
     run_flask()
